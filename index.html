@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Gerador de cadernos financeiros da IBEV. Abra sua planilha Excel e gere um Word pronto para imprimir.">
+  <title>IBEV • Caderno de comprovantes</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="shell header-flex">
+      <div class="brand-mark" aria-hidden="true">I</div>
+      <div>
+        <div class="brand-name">IBEV <span>• FINANCEIRO</span></div>
+        <div class="brand-sub">Gerador de caderno de comprovantes</div>
+      </div>
+      <span class="privacy-tag"><span class="status-dot"></span> Processamento no seu navegador</span>
+    </div>
+  </header>
+
+  <main class="shell main-grid">
+    <div class="left-column">
+      <section class="intro">
+        <div class="eyebrow">DOCUMENTAÇÃO FINANCEIRA</div>
+        <h1>Do Excel para o caderno, em poucos cliques.</h1>
+        <p>Selecione sua planilha, escolha o mês e baixe um único arquivo Word com as folhas de despesas organizadas para impressão e montagem dos comprovantes.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="step-upload">
+        <div class="section-head"><span class="step">1</span><h2 id="step-upload">Selecionar a planilha</h2></div>
+        <label id="dropzone" class="dropzone" for="file-input">
+          <span class="upload-icon" aria-hidden="true">⇧</span>
+          <strong id="file-primary">Arraste o arquivo Excel aqui</strong>
+          <span id="file-secondary">ou clique para escolher um arquivo .xlsx</span>
+          <span class="upload-cta">Escolher planilha</span>
+          <input id="file-input" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Selecionar planilha Excel">
+        </label>
+        <p class="hint">O arquivo é processado localmente. Nenhum lançamento financeiro é enviado a um servidor.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="step-month">
+        <div class="section-head"><span class="step">2</span><h2 id="step-month">Escolher o mês</h2></div>
+        <label class="field-label" for="month-select">Mês de referência</label>
+        <select id="month-select" disabled><option>Selecione uma planilha primeiro</option></select>
+        <p class="hint" id="month-hint">Os meses serão identificados automaticamente pelas abas do Excel.</p>
+      </section>
+
+      <section class="panel" aria-labelledby="step-categories">
+        <div class="section-head"><span class="step">3</span><h2 id="step-categories">Escolher as páginas</h2></div>
+        <div class="choice-head"><span>Classificações de saída</span><button id="toggle-all" type="button" class="text-button" disabled>Desmarcar todas</button></div>
+        <div id="categories" class="categories"><p class="empty-message">Carregue uma planilha para ver as categorias.</p></div>
+        <div class="total-line"><span>Total das categorias selecionadas</span><strong id="selected-total">R$ 0,00</strong></div>
+        <div class="extra-option"><label class="check-line"><input type="checkbox" id="include-overview" disabled><span>Adicionar uma folha de resumo geral ao final</span></label><p class="hint indent">Opcional. Desmarcado por padrão para reproduzir as seis páginas do programa original.</p></div>
+      </section>
+
+      <section class="panel final-panel" aria-labelledby="step-export">
+        <div class="section-head"><span class="step">4</span><h2 id="step-export">Gerar o documento</h2></div>
+        <div id="validation" class="validation neutral" role="status">Aguardando a seleção da planilha.</div>
+        <label class="check-line acknowledgement" id="acknowledgement-wrap" hidden><input id="acknowledge" type="checkbox"><span>Entendi as divergências e quero emitir o documento com os valores calculados.</span></label>
+        <button id="download-btn" class="primary-button" type="button" disabled><span aria-hidden="true">↓</span> Baixar caderno em Word (.docx)</button>
+        <p class="hint">Arquivo A4 horizontal, uma página por categoria, tabela à direita e linha pontilhada de dobra. Não requer Word instalado para gerar.</p>
+      </section>
+    </div>
+
+    <aside class="right-column" aria-labelledby="preview-title">
+      <div class="preview-panel">
+        <div class="preview-heading"><div><div class="eyebrow">PRÉ-VISUALIZAÇÃO</div><h2 id="preview-title">Página de impressão</h2></div><span class="tag" id="preview-counter">A4 • paisagem</span></div>
+        <label class="field-label" for="preview-select">Categoria exibida</label>
+        <select id="preview-select" disabled><option>Folha de pagamento / Pessoal</option></select>
+        <div class="preview-scroll"><div class="paper" id="paper">
+          <div class="paper-fold" aria-hidden="true"></div>
+          <div class="paper-content">
+            <h3 id="paper-title">FOLHA DE PAGAMENTO / PESSOAL</h3>
+            <table class="paper-table"><thead><tr><th>DESCRIÇÃO</th><th>VALOR</th></tr></thead><tbody id="paper-rows"><tr><td>PROVENTO PASTORAL</td><td>R$ 3.242,00</td></tr><tr><td>FGTM PASTORAL</td><td>R$ 259,36</td></tr><tr><td>Ajuda de custo (combustível)</td><td>R$ 400,00</td></tr><tr class="total"><td>TOTAL</td><td>R$ 3.901,36</td></tr></tbody></table>
+          </div>
+        </div></div>
+        <p class="hint preview-note">Exibição ilustrativa. O arquivo Word respeita as medidas A4 e pode ter pequenas diferenças de posição dependendo do editor e da impressora.</p>
+      </div>
+      <div class="side-info"><strong>Modelo baseado no ZIP original</strong><p>Mesma ordem das seis categorias, descrições com valor zero ocultas e linha TOTAL preservada. Diferentemente do código antigo, o gerador também confere subtotais e detecta registros com descrição igual ao título da categoria.</p></div>
+    </aside>
+  </main>
+  <footer class="site-footer shell"><span>IBEV • Ferramenta de uso interno</span><span>Sem login, banco de dados ou transmissão de planilhas</span></footer>
+</body>
+</html>
