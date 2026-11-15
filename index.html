@@ -7,7 +7,7 @@
   <meta name="description" content="Gerador de cadernos financeiros da IBEV. Abra sua planilha Excel e gere um Word pronto para imprimir.">
   <title>IBEV • Caderno de comprovantes</title>
   <link rel="stylesheet" href="styles.css">
-  <script src="app.js" defer></script>
+  <script src="app.js?v=1.2" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -52,8 +52,13 @@
         <div class="section-head"><span class="step">3</span><h2 id="step-categories">Escolher as páginas</h2></div>
         <div class="choice-head"><span>Classificações de saída</span><button id="toggle-all" type="button" class="text-button" disabled>Desmarcar todas</button></div>
         <div id="categories" class="categories"><p class="empty-message">Carregue uma planilha para ver as categorias.</p></div>
+        <div class="extra-option">
+          <label id="bank-option" class="category-row"><input type="checkbox" id="include-bank" checked disabled><span class="category-title">Incluir despesas bancárias (caderno e etiquetas)</span><span id="bank-total" class="category-value">R$ 0,00</span></label>
+          <p class="hint indent">Desmarque para retirar as despesas bancárias de todo o documento, inclusive do resumo geral opcional.</p>
+        </div>
         <div class="total-line"><span>Total das categorias selecionadas</span><strong id="selected-total">R$ 0,00</strong></div>
         <div class="extra-option"><label class="check-line"><input type="checkbox" id="include-overview" disabled><span>Adicionar uma folha de resumo geral ao final</span></label><p class="hint indent">Opcional. Desmarcado por padrão para reproduzir as seis páginas do programa original.</p></div>
+        <div class="extra-option"><label class="check-line"><input type="checkbox" id="include-tags" checked disabled><span><strong>Incluir etiquetas de detalhamento das despesas</strong></span></label><p class="hint indent" id="tag-count">Somente classificações com dois ou mais lançamentos. Etiquetas em A4 retrato, duas por folha quando couberem.</p></div>
       </section>
 
       <section class="panel final-panel" aria-labelledby="step-export">
@@ -61,7 +66,7 @@
         <div id="validation" class="validation neutral" role="status">Aguardando a seleção da planilha.</div>
         <label class="check-line acknowledgement" id="acknowledgement-wrap" hidden><input id="acknowledge" type="checkbox"><span>Entendi as divergências e quero emitir o documento com os valores calculados.</span></label>
         <button id="download-btn" class="primary-button" type="button" disabled><span aria-hidden="true">↓</span> Baixar caderno em Word (.docx)</button>
-        <p class="hint">Arquivo A4 horizontal, uma página por categoria, tabela à direita e linha pontilhada de dobra. Não requer Word instalado para gerar.</p>
+        <p class="hint">Caderno em A4 paisagem; etiquetas em A4 retrato. As orientações já estão configuradas no Word. Não requer Word instalado para gerar.</p>
       </section>
     </div>
 

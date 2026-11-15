@@ -14,6 +14,7 @@
     'DESPESA ALIMENTAÇÃO',
     'DESPESAS BANCÁRIAS'
   ];
+  const BANK_CATEGORY = 'DESPESAS BANCÁRIAS';
   const MONTHS = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
     'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
   const NS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -157,7 +158,7 @@
     const doc=parseXml(await workbook.zip.read(path),path);
     const rows=[];
     for(const rowNode of doc.getElementsByTagNameNS(NS_MAIN,'row')){
-      const cells={};
+      const cells={}, formulas={};
       for(const cell of rowNode.getElementsByTagNameNS(NS_MAIN,'c')){
         const address=cell.getAttribute('r')||'';
         const column=(address.match(/^[A-Z]+/i)||[])[0]?.toUpperCase();
@@ -165,6 +166,8 @@
         const kind=cell.getAttribute('t');
         const v=directChild(cell,'v');
         const inline=directChild(cell,'is');
+        const formula=directChild(cell,'f');
+        if(formula?.textContent)formulas[column]=formula.textContent;
         let value=null;
         if(kind==='s')value=workbook.shared[Number(v?.textContent)]??'';
         else if(kind==='inlineStr')value=Array.from(inline?.getElementsByTagNameNS(NS_MAIN,'t')||[]).map(t=>t.textContent).join('');
@@ -177,7 +180,7 @@
         }
         if(value!==null&&value!=='')cells[column]=value;
       }
-      rows.push({index:Number(rowNode.getAttribute('r'))||rows.length+1,cells});
+      rows.push({index:Number(rowNode.getAttribute('r'))||rows.length+1,cells,formulas});
     }
     return rows;
   }
@@ -231,7 +234,7 @@
       const next=headers.filter(h=>h.index>head.index).sort((a,b)=>a.index-b.index)[0];
       let end=next?next.index:rows.findIndex((r,i)=>i>head.index&&normalize(r.cells.A)==='TOTALRESUMO');
       if(end<0)end=rows.length;
-      const items=[];
+      const items=[], classifications=[];
       let explicit=null,subtotals=[];
       for(let i=head.index+1;i<end;i++){
         const c=rows[i].cells;
@@ -241,13 +244,14 @@
         if(n==='TOTAL') {explicit=amount;break;}
         if(colC!==null)subtotals.push(colC);
         if(!description || n==='TOTALRESUMO' || amount===null)continue;
+        classifications.push({description,amount:fromCents(cents(amount)),formula:rows[i].formulas?.B||''});
         if(cents(amount)===0)continue;
         items.push({description,amount:fromCents(cents(amount))});
       }
       const sumCents=items.reduce((sum,item)=>sum+cents(item.amount),0);
       const reported=explicit!==null?explicit:(subtotals.length?subtotals.at(-1):null);
       const difference=reported===null?null:sumCents-cents(reported);
-      categories.push({name,items,total:fromCents(sumCents),reported,difference,missing:false});
+      categories.push({name,items,classifications,total:fromCents(sumCents),reported,difference,missing:false});
     }
     const sumAllCents=categories.reduce((total,c)=>total+cents(c.total),0);
     const overallDifference=overall===null?null:sumAllCents-cents(overall);
@@ -255,7 +259,64 @@
     if(overallDifference!==null&&overallDifference!==0){
       warnings.push('Soma das categorias: '+safeMoney(fromCents(sumAllCents))+'; TOTAL RESUMO da planilha: '+safeMoney(overall)+'.');
     }
-    return {month,categories,overall,overallDifference,grandTotal:fromCents(sumAllCents),issues,warnings};
+    const detail=extractDetails(rows,candidates.reduce((min,c)=>Math.min(min,c.index),start),categories);
+    return {month,categories,overall,overallDifference,grandTotal:fromCents(sumAllCents),issues,warnings,...detail};
+  }
+
+  // Read the individual expense rows, not the aggregated summary. Historical
+  // SUMIF formulas can use a classification name different from the displayed label.
+  function extractDetails(rows,limit,categories){
+    const tags=[], lookup=new Map(), detailWarnings=[];
+    const matchKey=s=>String(s??'').trim().toLocaleUpperCase('pt-BR');
+    for(const cat of categories){
+      const grouped=new Map();
+      for(const item of cat.classifications||[]){
+        const key=normalize(item.description);
+        let tag=grouped.get(key);
+        if(!tag){
+          tag={category:cat.name,name:item.description,expectedCents:0,items:[]};
+          grouped.set(key,tag);tags.push(tag);
+        }
+        tag.expectedCents+=cents(item.amount);
+        const criterion=item.formula.match(/SUMIF\s*\(\s*\$?F\$?\d+:\$?F\$?\d+\s*[,;]\s*"((?:[^"]|"")*)"/i);
+        const name=criterion?criterion[1].replace(/""/g,'"'):item.description;
+        for(const alias of [name,item.description]){
+          const k=matchKey(alias);
+          if(!lookup.has(k))lookup.set(k,new Set());
+          lookup.get(k).add(tag);
+        }
+      }
+    }
+    const unmatched=new Map();
+    let started=false;
+    for(const row of rows.slice(0,limit)){
+      const c=row.cells;
+      if(normalize(c.A)==='DATA'&&normalize(c.B)==='HISTORICO'){started=true;continue;}
+      if(!started)continue;
+      // Only journal rows: date + amount, not balance/summary or repeated headings.
+      const date=c.A, amount=parseNumber(c.D);
+      if(amount===null||cents(amount)===0||!(typeof date==='number'&&date>1||typeof date==='string'&&/^(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}|\d{4}-\d{2}-\d{2})$/.test(date.trim())))continue;
+      const classification=String(c.F??'').trim()||'SEM CLASSIFICAÇÃO';
+      const matches=lookup.get(matchKey(classification));
+      let tag;
+      if(matches?.size===1)tag=[...matches][0];
+      else{
+        const key=normalize(classification);
+        if(!unmatched.has(key))unmatched.set(key,{category:null,name:classification,expectedCents:null,items:[]});
+        tag=unmatched.get(key);
+      }
+      tag.items.push({description:String(c.B??'').trim()||'(Sem histórico)',amount:fromCents(cents(amount)),row:row.index,date});
+    }
+    for(const tag of [...tags,...unmatched.values()]){
+      tag.total=fromCents(tag.items.reduce((sum,item)=>sum+cents(item.amount),0));
+      const invalidDates=tag.items.filter(i=>typeof i.date==='number'&&i.date>100000);
+      if(invalidDates.length)detailWarnings.push({category:tag.category,text:tag.name+': data a conferir na(s) linha(s) '+invalidDates.map(i=>i.row).join(', ')+'. O valor foi preservado.'});
+      if(tag.expectedCents!==null&&tag.expectedCents!==cents(tag.total)){
+        detailWarnings.push({category:tag.category,text:tag.name+': lançamentos '+safeMoney(tag.total)+'; resumo '+safeMoney(fromCents(tag.expectedCents))+'.'});
+      }
+      if(tag.category===null)detailWarnings.push({category:null,text:tag.name+': '+tag.items.length+' lançamento(s) fora das classificações do resumo ('+safeMoney(tag.total)+').'});
+    }
+    return {tags:[...tags.filter(t=>t.items.length||t.expectedCents!==0),...unmatched.values()],detailWarnings};
   }
 
   // Minimal self-contained ZIP writer for DOCX. Files use ZIP "store" compression,
@@ -350,7 +411,110 @@
     return pageTable('RESUMO GERAL DE SAÍDAS - '+month,
       makeExpenseTable(fake,{items:rows,showTotal:true}));
   }
-  function buildDocx(data,selected,withOverview){
+  function selectedTags(data,selected){
+    // Uma única nota já pode ser conferida diretamente pela folha do caderno.
+    // O filtro também controla a prévia de quantidade e a paginação do Word.
+    return (data.tags||[]).filter(t=>t.items.length>1&&(t.category===null?selected.size===CATEGORIES.length:selected.has(t.category)));
+  }
+  function tagDate(value){
+    if(typeof value!=='number')return String(value??'');
+    if(value>100000)return 'A conferir';
+    const d=new Date(Date.UTC(1899,11,30)+Math.floor(value)*86400000);
+    return d.toLocaleDateString('pt-BR',{timeZone:'UTC'});
+  }
+  // A4 portrait: two equal slots, or a full sheet when the list exceeds
+  // the half-page budget. Long histories are conservatively wrapped.
+  const TAG_HALF=7300, TAG_FULL=15100, TAG_WIDTH=10520;
+  function tagWrap(value,max=43){
+    const lines=[];
+    for(const part of String(value).split(/\r?\n/)){
+      let line='';
+      for(let word of part.split(/\s+/)){
+        if(!word)continue;
+        while(word.length>max){
+          if(line){lines.push(line);line='';}
+          lines.push(word.slice(0,max));word=word.slice(max);
+        }
+        if(line.length+word.length+1>max){lines.push(line);line=word;}
+        else line+=(line?' ':'')+word;
+      }
+      if(line)lines.push(line);
+    }
+    return lines.length?lines:[''];
+  }
+  function tagRowHeight(item){return 360+Math.max(0,tagWrap(item.description).length-1)*240;}
+  function tagPlan(tags){
+    const pages=[];let pending=null;
+    const flush=()=>{if(pending){pages.push({slots:[pending],full:false});pending=null;}};
+    for(const tag of tags){
+      const cost=2500+tag.items.reduce((s,i)=>s+tagRowHeight(i),0);
+      if(cost<=TAG_HALF-400){
+        const slot={tag,items:tag.items,start:0,part:1,parts:1,last:true};
+        if(pending){pages.push({slots:[pending,slot],full:false});pending=null;}else pending=slot;
+      }else{
+        flush();
+        const chunks=[];let chunk=[],used=2500;
+        for(const item of tag.items){
+          const h=tagRowHeight(item);
+          if(chunk.length&&used+h>TAG_FULL-850){chunks.push(chunk);chunk=[];used=2500;}
+          chunk.push(item);used+=h;
+        }
+        if(chunk.length||!chunks.length)chunks.push(chunk);
+        let start=0;
+        chunks.forEach((items,i)=>{
+          pages.push({full:true,slots:[{tag,items,start,part:i+1,parts:chunks.length,last:i===chunks.length-1}]});
+          start+=items.length;
+        });
+      }
+    }
+    flush();return pages;
+  }
+  function tagCell(text,width,opts={}){
+    const {bold=false,right=false,center=false,fill=false,wrap=false}=opts;
+    const lines=wrap?tagWrap(text):[text];
+    return '<w:tc><w:tcPr><w:tcW w:w="'+width+'" w:type="dxa"/>'+
+      (fill?'<w:shd w:val="clear" w:fill="E8E8E8"/>':'')+
+      '<w:tcMar><w:top w:w="45" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="45" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr>'+
+      lines.map(line=>paragraph(line,{size:19,bold,align:center?'center':right?'right':'left'})).join('')+'</w:tc>';
+  }
+  function detailTable(slot){
+    const {tag,items,start,last}=slot;
+    const widths=[620,1400,6200,2300],w=widths.reduce((s,n)=>s+n,0);
+    const row=(values,header=false,total=false)=>'<w:tr><w:trPr><w:cantSplit/>'+
+      (header?'<w:tblHeader/>':'')+'</w:trPr>'+
+      values.map((v,i)=>tagCell(v,widths[i],{bold:header||total,center:header||i===0,right:i===3&&!header,fill:header,wrap:i===2&&!header})).join('')+'</w:tr>';
+    const sum=fromCents(items.reduce((s,i)=>s+cents(i.amount),0));
+    let content=row(['Nº','DATA','HISTÓRICO / DESPESA','VALOR'],true);
+    content+=items.map((item,i)=>row([String(start+i+1),tagDate(item.date),item.description,safeMoney(item.amount)])).join('');
+    if(slot.parts>1)content+=row(['','','SUBTOTAL DESTA FOLHA',safeMoney(sum)],false,true);
+    if(last)content+=row(['','','TOTAL DA CLASSIFICAÇÃO',safeMoney(tag.total)],false,true);
+    return '<w:tbl><w:tblPr><w:tblW w:w="'+w+'" w:type="dxa"/>'+
+      '<w:tblBorders>'+['top','left','bottom','right','insideH','insideV'].map(side=>'<w:'+side+' w:val="single" w:sz="4" w:color="999999"/>').join('')+'</w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr>'+
+      '<w:tblGrid>'+widths.map(n=>'<w:gridCol w:w="'+n+'"/>').join('')+'</w:tblGrid>'+content+'</w:tbl>';
+  }
+  function detailSlot(slot,month){
+    const tag=slot.tag;
+    const subtitle=(tag.category||'FORA DO RESUMO DE SAÍDAS')+' • '+month;
+    const continuation=slot.parts>1?' ('+slot.part+'/'+slot.parts+')':'';
+    let content=paragraph('IBEV | '+subtitle,{size:18,bold:true,spaceAfter:100})+
+      paragraph(tag.name.toUpperCase()+continuation,{size:28,bold:true,spaceAfter:130})+
+      paragraph(tag.items.length+' lançamento(s) • Ordem da planilha',{size:18,spaceAfter:140})+
+      detailTable(slot);
+    if(slot.last&&tag.expectedCents!==null&&tag.expectedCents!==cents(tag.total)){
+      content+=paragraph('ATENÇÃO: resumo da planilha = '+safeMoney(fromCents(tag.expectedCents))+'; conferir a diferença.',{size:18,bold:true,spaceBefore:140});
+    }
+    if(tag.category===null)content+=paragraph('Lançamento fora do resumo. Não incluído no total das folhas do caderno.',{size:18,spaceBefore:140});
+    return content+paragraph('',{size:2});
+  }
+  function detailPage(page,month){
+    const slots=page.full?page.slots:[page.slots[0],page.slots[1]||null];
+    const height=page.full?TAG_FULL:TAG_HALF;
+    return '<w:tbl><w:tblPr><w:tblW w:w="'+TAG_WIDTH+'" w:type="dxa"/><w:tblBorders><w:insideH w:val="dashed" w:sz="5" w:color="777777"/></w:tblBorders><w:tblLayout w:type="fixed"/></w:tblPr>'+
+      '<w:tblGrid><w:gridCol w:w="'+TAG_WIDTH+'"/></w:tblGrid>'+
+      slots.map(slot=>'<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="'+height+'" w:hRule="atLeast"/></w:trPr><w:tc><w:tcPr><w:tcW w:w="'+TAG_WIDTH+'" w:type="dxa"/><w:tcMar><w:top w:w="230" w:type="dxa"/><w:bottom w:w="230" w:type="dxa"/><w:left w:w="0" w:type="dxa"/><w:right w:w="0" w:type="dxa"/></w:tcMar><w:vAlign w:val="top"/></w:tcPr>'+
+        (slot?detailSlot(slot,month):paragraph('',{size:2}))+'</w:tc></w:tr>').join('')+'</w:tbl>';
+  }
+  function buildDocx(data,selected,withOverview,withTags=false){
     const pages=[];
     for(const c of data.categories){
       if(!selected.has(c.name))continue;
@@ -364,11 +528,14 @@
     if(withOverview)pages.push(overviewPage(data.categories.filter(c=>selected.has(c.name)),data.month));
     if(!pages.length)throw new Error('Escolha pelo menos uma categoria.');
     const breaks=pages.map((page,i)=>(i===0?'':paragraph('',{breakBefore:true,size:2}))+page).join('');
+    const landscape='<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="180" w:right="120" w:bottom="180" w:left="120" w:header="0" w:footer="0" w:gutter="0"/><w:cols w:space="0"/><w:docGrid w:linePitch="240"/></w:sectPr>';
+    const portrait='<w:sectPr><w:type w:val="nextPage"/><w:pgSz w:w="11906" w:h="16838" w:orient="portrait"/><w:pgMar w:top="570" w:right="693" w:bottom="570" w:left="693" w:header="0" w:footer="0" w:gutter="0"/><w:cols w:space="0"/></w:sectPr>';
+    const tagPages=withTags?tagPlan(selectedTags(data,selected)):[];
+    const sectionBreak='<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/>'+landscape+'</w:pPr></w:p>';
+    const pageSection='<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="20" w:lineRule="exact"/><w:rPr><w:sz w:val="2"/></w:rPr>'+portrait+'</w:pPr></w:p>';
+    const tagContent=tagPages.map((page,i)=>detailPage(page,data.month)+(i<tagPages.length-1?pageSection:'')).join('');
     const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`+
-      `<w:document xmlns:w="${XMLNS_W}"><w:body>${breaks}`+
-      `<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/>`+
-      `<w:pgMar w:top="180" w:right="120" w:bottom="180" w:left="120" w:header="0" w:footer="0" w:gutter="0"/>`+
-      `<w:cols w:space="0"/><w:docGrid w:linePitch="240"/></w:sectPr></w:body></w:document>`;
+      `<w:document xmlns:w="${XMLNS_W}"><w:body>${breaks}${tagPages.length?sectionBreak+tagContent+portrait:landscape}</w:body></w:document>`;
     const types=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/><Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/></Types>`;
     const rels=`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/></Relationships>`;
     const wordRels=`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`;
@@ -394,7 +561,11 @@
     if(data.overallDifference!==null&&data.overallDifference!==0){
       lines.push('O TOTAL RESUMO da aba é '+safeMoney(data.overall)+', mas as categorias calculadas somam '+safeMoney(data.grandTotal)+'.');
     }
-    if(relevant.length||(data.overallDifference!==null&&data.overallDifference!==0)){
+    const detailIssues=el('include-tags').checked?(data.detailWarnings||[]).filter(w=>w.category===null?state.selected.size===CATEGORIES.length:state.selected.has(w.category)):[];
+    lines.push(...detailIssues.map(w=>w.text));
+    const tagCount=selectedTags(data,state.selected);
+    el('tag-count').textContent=el('include-tags').checked?(tagCount.length?tagCount.length+' etiqueta(s) • '+tagPlan(tagCount).length+' folha(s) A4 retrato. Somente classificações com dois ou mais lançamentos.':'Nenhuma classificação selecionada tem dois ou mais lançamentos. Apenas as folhas do caderno serão emitidas.'):'Etiquetas desativadas. Apenas as folhas do caderno serão emitidas.';
+    if(relevant.length||detailIssues.length||(data.overallDifference!==null&&data.overallDifference!==0)){
       output.className='validation warning';
       output.innerHTML='<strong>Conferência necessária: há diferenças nos registros.</strong><ul>'+lines.map(t=>'<li>'+xmlText(t)+'</li>').join('')+'</ul>';
       el('acknowledgement-wrap').hidden=false;
@@ -407,7 +578,7 @@
       output.innerHTML='<strong>Valores conferidos.</strong> As categorias coincidem com os subtotais registrados no Excel. Pronto para gerar o Word.';
       el('acknowledgement-wrap').hidden=true;
     }
-    const needAck=relevant.length>0||(data.overallDifference!==null&&data.overallDifference!==0);
+    const needAck=relevant.length>0||detailIssues.length>0||(data.overallDifference!==null&&data.overallDifference!==0);
     el('download-btn').disabled=state.selected.size===0||(needAck&&!el('acknowledge').checked);
   }
   function showCategory(name){
@@ -430,6 +601,12 @@
     if(!data)return;
     const list=el('categories');list.replaceChildren();
     for(const cat of data.categories){
+      if(cat.name===BANK_CATEGORY){
+        el('include-bank').checked=state.selected.has(BANK_CATEGORY);
+        el('bank-total').textContent=safeMoney(cat.total)+(cat.missing?' ⚠':'');
+        el('bank-option').classList.toggle('has-issue',!!(cat.missing||cat.difference));
+        continue;
+      }
       const row=document.createElement('label');row.className='category-row';
       if(cat.missing||cat.difference)row.classList.add('has-issue');
       const check=document.createElement('input');check.type='checkbox';check.checked=state.selected.has(cat.name);
@@ -450,7 +627,7 @@
   }
   async function selectMonth(month){
     state.month=month;
-    el('month-select').disabled=true;el('download-btn').disabled=true;
+    el('month-select').disabled=true;el('download-btn').disabled=true;el('include-bank').disabled=true;
     el('validation').className='validation neutral';el('validation').textContent='Conferindo os lançamentos e os subtotais...';
     try{
       const rows=await readSheet(state.workbook,month);
@@ -458,6 +635,8 @@
       el('acknowledge').checked=false;
       el('preview-select').disabled=false;
       el('include-overview').disabled=false;
+      el('include-tags').disabled=false;
+      el('include-bank').disabled=false;
       el('toggle-all').disabled=false;
       refreshSummary();
     }catch(err){state.parsed=null;el('validation').className='validation error';el('validation').textContent=err.message;
@@ -474,6 +653,7 @@
     el('file-secondary').textContent='Lendo a planilha com segurança...';
     el('validation').className='validation neutral';el('validation').textContent='Abrindo o Excel...';
     el('download-btn').disabled=true;
+    el('include-bank').disabled=true;
     try{
       const wb=await readWorkbook(await file.arrayBuffer());
       const candidates=MONTHS.filter(m=>Array.from(wb.sheets.keys()).some(n=>normalize(n)===normalize(m)));
@@ -507,26 +687,32 @@
     const preview=el('preview-select');preview.replaceChildren();
     for(const title of CATEGORIES){const opt=document.createElement('option');opt.value=title;opt.textContent=title;preview.appendChild(opt);}
     el('toggle-all').addEventListener('click',()=>{state.selected=state.selected.size===CATEGORIES.length?new Set():new Set(CATEGORIES);el('acknowledge').checked=false;refreshSummary();});
+    el('include-bank').addEventListener('change',e=>{
+      if(e.target.checked)state.selected.add(BANK_CATEGORY);else state.selected.delete(BANK_CATEGORY);
+      el('acknowledge').checked=false;refreshSummary();
+    });
     el('acknowledge').addEventListener('change',alertValidation);
+    el('include-tags').addEventListener('change',()=>{el('acknowledge').checked=false;alertValidation();});
     el('download-btn').addEventListener('click',async()=>{
       if(!state.parsed||!state.selected.size)return;
       const relevant=state.parsed.issues.filter(i=>state.selected.has(i.name));
       const globalMismatch=state.parsed.overallDifference!==null&&state.parsed.overallDifference!==0;
-      if((relevant.length||globalMismatch)&&!el('acknowledge').checked)return;
+      const detailIssues=el('include-tags').checked&&(state.parsed.detailWarnings||[]).some(w=>w.category===null?state.selected.size===CATEGORIES.length:state.selected.has(w.category));
+      if((relevant.length||globalMismatch||detailIssues)&&!el('acknowledge').checked)return;
       const button=el('download-btn');button.disabled=true;button.textContent='Gerando documento Word...';
       try{
-        const blob=buildDocx(state.parsed,state.selected,el('include-overview').checked);
+        const blob=buildDocx(state.parsed,state.selected,el('include-overview').checked,el('include-tags').checked);
         const url=URL.createObjectURL(blob);
         const a=document.createElement('a');a.href=url;
         a.download=`IBEV_Caderno_${normalize(state.month)}_${(state.fileName.match(/20\d{2}/)||[])[0]||'Financeiro'}.docx`;
         document.body.appendChild(a);a.click();a.remove();
         setTimeout(()=>URL.revokeObjectURL(url),5000);
-        el('validation').className='validation ok';el('validation').innerHTML='<strong>Documento gerado.</strong> Confira a pasta Downloads do seu navegador e abra o Word para imprimir em A4 paisagem.';
+        el('validation').className='validation ok';el('validation').innerHTML='<strong>Documento gerado.</strong> Confira a pasta Downloads e imprima respeitando a orientação de cada página do Word.';
       }catch(err){el('validation').className='validation error';el('validation').textContent='Falha ao gerar o Word: '+(err.message||err);}
       finally{button.textContent='↓  Baixar caderno em Word (.docx)';alertValidation();}
     });
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
   // Exposed only to help with local automated validation, no network calls.
-  window.IBEV_TEST={readWorkbook,readSheet,extractMonth,buildDocx,normalize};
+  window.IBEV_TEST={readWorkbook,readSheet,extractMonth,buildDocx,normalize,tagPlan,selectedTags};
 })();

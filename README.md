@@ -9,11 +9,31 @@ Ferramenta simples para gerar um arquivo Word (`.docx`) com as **saídas mensais
 1. Abra o endereço da ferramenta (ou o arquivo `index.html`).
 2. Selecione o arquivo `MOVIMENTO 2026.xlsx` no seu computador. Se estiver no OneDrive, obtenha a versão `.xlsx` atualizada antes.
 3. Selecione o **mês**. A ferramenta reconhece as 12 abas, de janeiro a dezembro.
-4. Marque as **categorias** que deseja incluir. Todas começam selecionadas.
+4. Marque as **categorias** que deseja incluir. Todas começam selecionadas, inclusive a caixa específica **Incluir despesas bancárias (caderno e etiquetas)**. Desmarque essa caixa para excluir despesas bancárias de todo o Word, inclusive do resumo geral opcional.
 5. Opcionalmente, marque **Adicionar uma folha de resumo geral ao final**.
 6. Confira os valores e os avisos. Se houver divergência, o sistema pede uma confirmação explícita.
-7. Clique em **Baixar caderno em Word (.docx)**.
-8. Abra o Word e imprima **A4, paisagem**, sem escala adicional, preferencialmente conferindo a prévia de impressão.
+7. A opção **Incluir etiquetas de detalhamento das despesas** vem marcada. Desmarque-a caso queira somente as folhas originais.
+8. Clique em **Baixar caderno em Word (.docx)**.
+9. Abra o Word e imprima em A4, respeitando a orientação de cada página (paisagem para o caderno e retrato para as etiquetas). Confira a prévia antes de imprimir.
+
+## Novidades da versão 1.2
+
+- As etiquetas são geradas somente para classificações com dois ou mais lançamentos de saída.
+- Uma única caixa controla a inclusão das despesas bancárias no caderno, nas etiquetas e no resumo geral opcional. Ela começa marcada, preservando o comportamento anterior.
+- A contagem de etiquetas e páginas é atualizada conforme as opções selecionadas. Se nenhuma classificação tiver etiqueta elegível, não é criada uma seção de etiquetas vazia.
+
+## Etiquetas de detalhamento
+
+- Uma etiqueta por classificação de saída com pelo menos dois lançamentos, na mesma ordem das classificações das folhas do caderno.
+- Cada etiqueta traz os lançamentos individuais da aba selecionada: número sequencial, data (coluna A), histórico (B), valor (D) e total da classificação. O agrupamento usa a classificação de saída (F), inclusive nomes históricos identificados nas fórmulas de resumo.
+- Duas etiquetas em uma folha A4 retrato sempre que couberem, com uma linha tracejada para corte. Listas maiores ocupam uma folha inteira; se necessário, continuam na página seguinte, preservando a numeração e exibindo os subtotais e o total geral da classificação.
+- O sistema compara o total das etiquetas com o resumo. Lançamentos sem correspondência no resumo (inclusive transferências ou despesas ainda não classificadas) são apresentados separadamente quando todas as categorias são selecionadas, com aviso de que não integram o total do caderno. Confira antes de emitir.
+- A versão original das folhas A4 paisagem foi mantida. As etiquetas são acrescentadas somente depois delas e do resumo opcional.
+- Se uma data estiver manifestamente fora do intervalo usual, é exibido "A conferir", sem excluir o respectivo lançamento.
+
+### Atualizar um site já publicado
+
+Substitua `index.html`, `app.js` e `README.md` no repositório existente. Os demais arquivos podem permanecer. Após o GitHub Pages concluir a publicação, abra o site e use Ctrl+Shift+R para atualizar a página.
 
 ## Publicar no GitHub Pages (sem linha de comando)
 
@@ -61,4 +81,4 @@ A lista de seis categorias fica no início de `app.js`, em `CATEGORIES`. Para us
 
 ## Testes realizados
 
-A versão 1.0 foi testada com o arquivo **MOVIMENTO 2026.xlsx** fornecido pela IBEV, inclusive os formatos de janeiro e de agosto. O Word gerado para agosto de 2026 foi aberto/renderizado, produzindo seis folhas A4 em paisagem. Os totais das seis categorias de agosto conferiram com a planilha, totalizando **R$ 12.176,30**.
+A versão 1.2 foi testada com dados do arquivo **MOVIMENTO 2026.xlsx** nos 12 meses, incluindo a seleção e a exclusão das despesas bancárias. No teste de agosto, com todas as categorias selecionadas, foram geradas seis folhas em paisagem e três em retrato, com seis etiquetas; ao excluir despesas bancárias, foram geradas cinco folhas em paisagem e três em retrato, com cinco etiquetas. Também foram verificadas as opções de resumo geral e de geração sem etiquetas. Os documentos de teste foram renderizados e não apresentaram páginas em branco.
